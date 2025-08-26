@@ -2,7 +2,9 @@ import { Buffer } from 'node:buffer';
 import { createWorker, PSM } from 'tesseract.js';
 import { defineTextExtractor } from '../extractors.models';
 import { containsArabic, postprocessArabicOCR } from '../utils/arabic-text-processor';
-import { preprocessArabicDocument, validateImageForOCR } from '../utils/image-preprocessor';
+import { validateImageForOCR } from '../utils/image-preprocessor';
+import { performMultiVariantArabicOCR } from '../utils/advanced-arabic-ocr';
+import { performComprehensiveArabicOCR } from '../utils/arabic-ocr-fallback';
 
 export async function extractTextFromImage(maybeArrayBuffer: ArrayBuffer | Buffer, { languages }: { languages: string[] }) {
   const buffer = maybeArrayBuffer instanceof ArrayBuffer ? Buffer.from(maybeArrayBuffer) : maybeArrayBuffer;
@@ -10,88 +12,107 @@ export async function extractTextFromImage(maybeArrayBuffer: ArrayBuffer | Buffe
   // Check if Arabic is in the language list
   const isArabicOCR = languages.includes('ara');
   
-  let processedBuffer = buffer;
-  
-  // Apply Arabic-specific preprocessing if Arabic language is detected
+  // Use advanced Arabic OCR if Arabic language is detected
   if (isArabicOCR) {
+    console.log('Using advanced Arabic OCR processing...');
+    
     try {
-      // Validate image quality
+      // Validate image quality first
       const validation = await validateImageForOCR(buffer);
       if (!validation.isValid) {
         console.warn('Image quality issues detected:', validation.issues);
         console.info('Recommendations:', validation.recommendations);
       }
       
-      // Preprocess image for optimal Arabic OCR with safer settings
-      processedBuffer = await preprocessArabicDocument(buffer, {
-        enhanceContrast: true,
-        reduceNoise: false, // Disable noise reduction to avoid over-processing small images
-        targetDpi: 200, // Lower DPI to avoid scaling issues
-        sharpen: false, // Disable sharpening for small images
-        grayscale: true,
+      // Step 1: Try advanced multi-variant approach
+      const advancedResult = await performMultiVariantArabicOCR(buffer, {
+        languages,
+        maxAttempts: 3,
+        minConfidenceThreshold: 75,
+        enableAdvancedPreprocessing: true,
       });
+      
+      if (advancedResult.confidence >= 75) {
+        console.log(`Advanced Arabic OCR succeeded: ${advancedResult.confidence}% confidence using ${advancedResult.strategy}`);
+        return advancedResult.text;
+      }
+      
+      console.log(`Advanced OCR confidence too low: ${advancedResult.confidence}%, trying comprehensive fallback...`);
+      
+      // Step 2: Try comprehensive fallback with different approaches
+      const fallbackResult = await performComprehensiveArabicOCR(buffer, languages);
+      
+      if (fallbackResult.success && fallbackResult.confidence > advancedResult.confidence) {
+        console.log(`Fallback OCR succeeded: ${fallbackResult.confidence}% confidence using ${fallbackResult.method}`);
+        return fallbackResult.text;
+      }
+      
+      // Use the better of the two results
+      if (advancedResult.confidence > 0) {
+        console.log(`Using advanced OCR result: ${advancedResult.confidence}% confidence`);
+        return advancedResult.text;
+      } else if (fallbackResult.success) {
+        console.log(`Using fallback OCR result: ${fallbackResult.confidence}% confidence`);
+        return fallbackResult.text;
+      } else {
+        console.warn('All Arabic OCR approaches failed, falling back to standard OCR');
+      }
     } catch (error) {
-      console.warn('Image preprocessing failed, using original image:', error.message);
-      processedBuffer = buffer;
+      console.warn('Advanced Arabic OCR failed:', error.message);
+      console.log('Falling back to standard OCR...');
     }
   }
+  
+  // Fallback to standard OCR for non-Arabic or when advanced OCR fails
+  return performStandardOCR(buffer, languages);
+}
 
-  // Create Tesseract worker
+/**
+ * Standard OCR processing (fallback)
+ */
+async function performStandardOCR(buffer: Buffer, languages: string[]): Promise<string> {
   const worker = await createWorker(languages);
   
-  // Set Arabic-specific optimization parameters
-  if (isArabicOCR) {
-    await worker.setParameters({
-      preserve_interword_spaces: '1',
-      // Arabic-specific Tesseract parameters for better recognition
-      textord_heavy_nr: '1',
-      textord_debug_tabfind: '0',
-      // Improve Arabic character recognition
-      classify_enable_learning: '0',
-      classify_enable_adaptive_matcher: '1',
-      // Handle right-to-left text better
-      textord_really_old_xheight: '1',
-      textord_tabfind_show_vlines: '0',
-      // Page segmentation mode - try AUTO first for better results
-      tessedit_pageseg_mode: PSM.AUTO,
-      // Additional Arabic-specific parameters
-      tessedit_char_whitelist: '', // Don't restrict characters for Arabic
-      tessedit_char_blacklist: '', // Don't blacklist any characters
-      // Improve word recognition
-      textord_min_linesize: '1.25',
-      // Better handling of Arabic script
-      textord_tabfind_force_vertical_text: '0',
-      // Optimize for Arabic text direction
-      bidi_debug: '0',
-    });
-  }
-
-  const { data: { text, confidence } } = await worker.recognize(processedBuffer);
-  await worker.terminate();
-  
-  // Post-process Arabic text if detected
-  let processedText = text;
-  if (isArabicOCR && containsArabic(text)) {
-    try {
-      processedText = postprocessArabicOCR(text);
-    } catch (error) {
-      console.warn('Arabic text post-processing failed, using raw OCR output:', error.message);
-      processedText = text;
-    }
-  }
-  
-  // Log confidence for debugging and provide suggestions
-  if (confidence < 70) {
-    console.warn(`Low OCR confidence: ${confidence}% for languages: ${languages.join(', ')}`);
+  try {
+    const isArabicOCR = languages.includes('ara');
+    
+    // Set basic Arabic-optimized parameters
     if (isArabicOCR) {
+      await worker.setParameters({
+        preserve_interword_spaces: '1',
+        tessedit_pageseg_mode: PSM.AUTO,
+        classify_enable_adaptive_matcher: '1',
+        textord_heavy_nr: '1',
+      });
+    }
+
+    const { data: { text, confidence } } = await worker.recognize(buffer);
+    
+    // Post-process Arabic text if detected
+    let processedText = text;
+    if (isArabicOCR && containsArabic(text)) {
+      try {
+        processedText = postprocessArabicOCR(text);
+      } catch (error) {
+        console.warn('Arabic text post-processing failed:', error.message);
+        processedText = text;
+      }
+    }
+    
+    // Log confidence for debugging
+    console.log(`Standard OCR confidence: ${confidence}% for languages: ${languages.join(', ')}`);
+    
+    if (confidence < 70 && isArabicOCR) {
       console.info('For better Arabic OCR results, try:');
       console.info('- Higher resolution images (300+ DPI)');
       console.info('- Better contrast and lighting');
       console.info('- Cleaner text without noise or artifacts');
     }
-  }
 
-  return processedText;
+    return processedText;
+  } finally {
+    await worker.terminate();
+  }
 }
 
 export const imageExtractorDefinition = defineTextExtractor({

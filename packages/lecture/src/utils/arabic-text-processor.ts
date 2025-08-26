@@ -110,14 +110,43 @@ export function preprocessArabicForOCR(text: string): string {
  * Post-processes OCR output for Arabic text
  */
 export function postprocessArabicOCR(ocrOutput: string): string {
-  // Normalize the OCR output
+  // Import text enhancer dynamically to avoid circular imports
+  const { enhanceArabicTextQuality, reconstructArabicText, scoreArabicTextQuality } = require('./arabic-text-enhancer');
+  
+  // Step 1: Normalize the OCR output
   let processed = normalizeArabicText(ocrOutput);
   
-  // Fix common OCR errors for Arabic
+  // Step 2: Fix common OCR errors for Arabic
   processed = fixCommonArabicOCRErrors(processed);
   
-  // Reshape for proper display
+  // Step 3: Enhance text quality using advanced corrections
+  try {
+    processed = enhanceArabicTextQuality(processed);
+  } catch (error) {
+    console.warn('Arabic text enhancement failed:', error.message);
+  }
+  
+  // Step 4: Reconstruct text using context
+  try {
+    processed = reconstructArabicText(processed);
+  } catch (error) {
+    console.warn('Arabic text reconstruction failed:', error.message);
+  }
+  
+  // Step 5: Reshape for proper display
   processed = reshapeArabicText(processed);
+  
+  // Step 6: Score and report quality
+  try {
+    const quality = scoreArabicTextQuality(processed);
+    console.log(`Arabic text quality score: ${quality.score}%`);
+    if (quality.issues.length > 0) {
+      console.warn('Text quality issues:', quality.issues);
+      console.info('Suggestions:', quality.suggestions);
+    }
+  } catch (error) {
+    console.warn('Text quality scoring failed:', error.message);
+  }
   
   return processed;
 }
@@ -127,32 +156,138 @@ export function postprocessArabicOCR(ocrOutput: string): string {
  */
 function fixCommonArabicOCRErrors(text: string): string {
   const commonErrors = [
-    // Common character misrecognitions
-    { from: /٠/g, to: '0' }, // Arabic-Indic digit zero to ASCII
-    { from: /١/g, to: '1' }, // Arabic-Indic digit one to ASCII
-    { from: /٢/g, to: '2' }, // Arabic-Indic digit two to ASCII
-    { from: /٣/g, to: '3' }, // Arabic-Indic digit three to ASCII
-    { from: /٤/g, to: '4' }, // Arabic-Indic digit four to ASCII
-    { from: /٥/g, to: '5' }, // Arabic-Indic digit five to ASCII
-    { from: /٦/g, to: '6' }, // Arabic-Indic digit six to ASCII
-    { from: /٧/g, to: '7' }, // Arabic-Indic digit seven to ASCII
-    { from: /٨/g, to: '8' }, // Arabic-Indic digit eight to ASCII
-    { from: /٩/g, to: '9' }, // Arabic-Indic digit nine to ASCII
+    // Common character misrecognitions in Arabic OCR
+    { from: /[o0O]/g, to: '٠' }, // ASCII digits to Arabic-Indic when in Arabic context
+    { from: /[1l]/g, to: '١' },
+    { from: /2/g, to: '٢' },
+    { from: /3/g, to: '٣' },
+    { from: /4/g, to: '٤' },
+    { from: /5/g, to: '٥' },
+    { from: /6/g, to: '٦' },
+    { from: /7/g, to: '٧' },
+    { from: /8/g, to: '٨' },
+    { from: /9/g, to: '٩' },
     
-    // Fix spacing around Arabic punctuation
+    // Fix common Arabic letter OCR mistakes
+    { from: /ﻊ/g, to: 'ع' }, // Different forms of Ain
+    { from: /ﻋ/g, to: 'ع' },
+    { from: /ﻌ/g, to: 'ع' },
+    { from: /ﻋ/g, to: 'ع' },
+    
+    { from: /ﺡ/g, to: 'ح' }, // Different forms of Hah
+    { from: /ﺣ/g, to: 'ح' },
+    { from: /ﺤ/g, to: 'ح' },
+    { from: /ﺣ/g, to: 'ح' },
+    
+    { from: /ﺭ/g, to: 'ر' }, // Different forms of Reh
+    { from: /ﺮ/g, to: 'ر' },
+    
+    { from: /ﺱ/g, to: 'س' }, // Different forms of Seen
+    { from: /ﺳ/g, to: 'س' },
+    { from: /ﺴ/g, to: 'س' },
+    { from: /ﺳ/g, to: 'س' },
+    
+    { from: /ﻡ/g, to: 'م' }, // Different forms of Meem
+    { from: /ﻣ/g, to: 'م' },
+    { from: /ﻤ/g, to: 'م' },
+    { from: /ﻣ/g, to: 'م' },
+    
+    { from: /ﻥ/g, to: 'ن' }, // Different forms of Noon
+    { from: /ﻧ/g, to: 'ن' },
+    { from: /ﻨ/g, to: 'ن' },
+    { from: /ﻧ/g, to: 'ن' },
+    
+    { from: /ﻝ/g, to: 'ل' }, // Different forms of Lam
+    { from: /ﻟ/g, to: 'ل' },
+    { from: /ﻠ/g, to: 'ل' },
+    { from: /ﻟ/g, to: 'ل' },
+    
+    { from: /ﻙ/g, to: 'ك' }, // Different forms of Kaf
+    { from: /ﻛ/g, to: 'ك' },
+    { from: /ﻜ/g, to: 'ك' },
+    { from: /ﻛ/g, to: 'ك' },
+    
+    { from: /ﻱ/g, to: 'ي' }, // Different forms of Yeh
+    { from: /ﻳ/g, to: 'ي' },
+    { from: /ﻴ/g, to: 'ي' },
+    { from: /ﻳ/g, to: 'ي' },
+    
+    // Fix common OCR confusion between similar characters
+    { from: /[ﺀ]/g, to: 'ء' }, // Hamza
+    { from: /[ﺁآ]/g, to: 'آ' }, // Alef with Madda
+    { from: /[ﺃأ]/g, to: 'أ' }, // Alef with Hamza above
+    { from: /[ﺇإ]/g, to: 'إ' }, // Alef with Hamza below
+    { from: /[ﺍا]/g, to: 'ا' }, // Alef
+    
+    // Fix spacing issues
     { from: /\s*،\s*/g, to: '، ' }, // Arabic comma
     { from: /\s*؛\s*/g, to: '؛ ' }, // Arabic semicolon
     { from: /\s*؟\s*/g, to: '؟ ' }, // Arabic question mark
     { from: /\s*!\s*/g, to: '! ' }, // Exclamation mark
     
-    // Fix common letter confusions
-    { from: /ك/g, to: 'ك' }, // Ensure proper Kaf
-    { from: /ي/g, to: 'ي' }, // Ensure proper Yeh
+    // Remove excessive spaces
+    { from: /\s{3,}/g, to: '  ' }, // Multiple spaces to double space
+    { from: /\s{2,}/g, to: ' ' },  // Double spaces to single space
+    
+    // Fix line breaks
+    { from: /\n\s*\n/g, to: '\n' }, // Remove empty lines
+    { from: /([^\n])\n([^\n])/g, to: '$1 $2' }, // Join broken words
   ];
   
   let fixed = text;
-  for (const error of commonErrors) {
-    fixed = fixed.replace(error.from, error.to);
+  
+  // Only apply Arabic-specific fixes if text contains Arabic
+  if (containsArabic(text)) {
+    for (const error of commonErrors) {
+      fixed = fixed.replace(error.from, error.to);
+    }
+    
+    // Additional Arabic-specific corrections
+    fixed = fixArabicWordBoundaries(fixed);
+    fixed = fixArabicLigatures(fixed);
+  }
+  
+  return fixed.trim();
+}
+
+/**
+ * Fixes Arabic word boundaries that might be broken by OCR
+ */
+function fixArabicWordBoundaries(text: string): string {
+  // Fix broken words by looking for Arabic character patterns
+  return text
+    // Fix broken words with Arabic letters
+    .replace(/([ا-ي])\s+([ا-ي])/g, (match, char1, char2) => {
+      // Check if this looks like a broken word
+      if (char1.length === 1 && char2.length === 1) {
+        return char1 + char2; // Join single characters
+      }
+      return match;
+    })
+    // Fix broken definite article (ال)
+    .replace(/ا\s+ل\s+/g, 'ال')
+    // Fix broken common prefixes
+    .replace(/و\s+([ا-ي])/g, 'و$1')
+    .replace(/ب\s+([ا-ي])/g, 'ب$1')
+    .replace(/ل\s+([ا-ي])/g, 'ل$1')
+    .replace(/ك\s+([ا-ي])/g, 'ك$1');
+}
+
+/**
+ * Fixes Arabic ligatures that might be misrecognized
+ */
+function fixArabicLigatures(text: string): string {
+  const ligatureFixes = [
+    // Common ligature fixes
+    { from: /لا/g, to: 'لا' }, // Lam-Alef ligature
+    { from: /لآ/g, to: 'لآ' }, // Lam-Alef with Madda
+    { from: /لأ/g, to: 'لأ' }, // Lam-Alef with Hamza above
+    { from: /لإ/g, to: 'لإ' }, // Lam-Alef with Hamza below
+  ];
+  
+  let fixed = text;
+  for (const ligature of ligatureFixes) {
+    fixed = fixed.replace(ligature.from, ligature.to);
   }
   
   return fixed;

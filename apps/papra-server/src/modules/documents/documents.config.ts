@@ -15,7 +15,7 @@ export const documentsConfig = {
       stringCoercedOcrLanguagesSchema,
       ocrLanguagesSchema,
     ]),
-    default: ['eng'],
+    default: ['ara', 'eng'], // Optimized for Arabic documents with English fallback
     env: 'DOCUMENTS_OCR_LANGUAGES',
   },
 } as const satisfies ConfigDefinition;

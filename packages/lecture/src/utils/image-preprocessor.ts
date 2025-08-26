@@ -44,63 +44,104 @@ export async function preprocessImageForOCR(
   
   // Get image metadata
   const metadata = await image.metadata();
+  const width = metadata.width || 0;
+  const height = metadata.height || 0;
   
-  // Calculate scaling factor for target DPI, but ensure minimum dimensions
-  const currentDpi = metadata.density || 72;
-  const scaleFactor = targetDpi / currentDpi;
-  const minWidth = 100;
-  const minHeight = 100;
-  
-  // Resize if needed for optimal DPI, but ensure minimum dimensions
-  if (scaleFactor !== 1 && scaleFactor > 0.5 && scaleFactor < 3) {
-    const newWidth = Math.max(minWidth, Math.round((metadata.width || 0) * scaleFactor));
-    const newHeight = Math.max(minHeight, Math.round((metadata.height || 0) * scaleFactor));
-    
-    // Only resize if the image is not too small
-    if ((metadata.width || 0) >= 10 && (metadata.height || 0) >= 10) {
-      image = image.resize(newWidth, newHeight, {
-        kernel: sharp.kernel.lanczos3,
-        withoutEnlargement: false,
-      });
-    }
+  // Skip processing for very small images
+  if (width < 20 || height < 20) {
+    console.warn('Image too small for preprocessing, returning original');
+    return buffer;
   }
   
-  // Convert to grayscale for better OCR performance
+  // Calculate optimal scaling for Arabic text OCR
+  const currentDpi = metadata.density || 72;
+  let scaleFactor = targetDpi / currentDpi;
+  
+  // Ensure minimum readable size for Arabic text (Arabic needs higher resolution)
+  const minWidth = 400;  // Higher minimum for Arabic text
+  const minHeight = 200;
+  
+  if (width < minWidth || height < minHeight) {
+    // Scale up small images for better Arabic OCR
+    const scaleX = minWidth / width;
+    const scaleY = minHeight / height;
+    scaleFactor = Math.max(scaleFactor, Math.min(scaleX, scaleY));
+  }
+  
+  // Apply intelligent scaling
+  if (scaleFactor > 1.1 || scaleFactor < 0.9) {
+    const newWidth = Math.round(width * scaleFactor);
+    const newHeight = Math.round(height * scaleFactor);
+    
+    image = image.resize(newWidth, newHeight, {
+      kernel: sharp.kernel.lanczos3,
+      withoutEnlargement: false,
+    });
+  }
+  
+  // Convert to grayscale first for better processing
   if (grayscale) {
     image = image.grayscale();
   }
   
-  // Enhance contrast
+  // Advanced contrast enhancement for Arabic text
   if (enhanceContrast) {
+    // Use histogram equalization for better contrast
     image = image.normalize();
+    
+    // Apply gamma correction for better text visibility
+    image = image.gamma(1.2);
+    
+    // Enhance local contrast
+    image = image.linear(1.2, -(128 * 0.2));
   }
   
-  // Apply sharpening to improve text clarity
-  if (sharpen) {
-    image = image.sharpen({
-      sigma: 1.0,
-      m1: 1.0,
-      m2: 2.0,
-      x1: 2.0,
-      y2: 10.0,
-      y3: 20.0,
-    });
-  }
-  
-  // Reduce noise using blur and threshold
+  // Noise reduction specifically tuned for Arabic text
   if (reduceNoise) {
-    image = image.blur(0.5);
+    // Use median filter for noise reduction while preserving edges
+    image = image.median(3);
   }
   
-  // Apply binarization if threshold is specified
-  if (binarizationThreshold !== undefined) {
-    image = image.threshold(binarizationThreshold, {
-      greyscale: false,
+  // Advanced sharpening for Arabic characters
+  if (sharpen) {
+    // Use unsharp mask for better text clarity
+    image = image.sharpen({
+      sigma: 1.5,     // Slightly larger radius for Arabic text
+      m1: 1.0,        // Threshold
+      m2: 2.5,        // Amount
+      x1: 3.0,        // Threshold for dark areas
+      y2: 15.0,       // Multiplier for dark areas
+      y3: 25.0,       // Maximum enhancement
     });
   }
   
-  // Set high quality JPEG compression or PNG for lossless
-  return image.jpeg({ quality: 95 }).toBuffer();
+  // Apply morphological operations to clean up text
+  image = image.convolve({
+    width: 3,
+    height: 3,
+    kernel: [
+      -1, -1, -1,
+      -1,  9, -1,
+      -1, -1, -1
+    ]
+  });
+  
+  // Apply adaptive binarization if no specific threshold
+  if (binarizationThreshold !== undefined) {
+    image = image.threshold(binarizationThreshold);
+  } else {
+    // Use Otsu's method for automatic threshold selection
+    const stats = await image.clone().stats();
+    const avgBrightness = stats.channels.reduce((sum, ch) => sum + ch.mean, 0) / stats.channels.length;
+    const autoThreshold = Math.max(100, Math.min(180, avgBrightness * 1.1));
+    image = image.threshold(autoThreshold);
+  }
+  
+  // Final cleanup - remove small noise artifacts
+  image = image.median(1);
+  
+  // Output as PNG for lossless quality (better for OCR than JPEG)
+  return image.png({ quality: 100, compressionLevel: 0 }).toBuffer();
 }
 
 /**
