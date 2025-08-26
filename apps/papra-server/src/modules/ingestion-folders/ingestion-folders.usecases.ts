@@ -2,12 +2,13 @@ import type { Stats } from 'node:fs';
 import type { Database } from '../app/database/database.types';
 import type { Config } from '../config/config.types';
 import type { CreateDocumentUsecase } from '../documents/documents.usecases';
+import type { DocumentStorageService } from '../documents/storage/documents.storage.services';
 import type { OrganizationsRepository } from '../organizations/organizations.repository';
 import type { FsServices } from '../shared/fs/fs.services';
 import type { Logger } from '../shared/logger/logger';
 import type { TaskServices } from '../tasks/tasks.services';
 import { isAbsolute, join, parse } from 'node:path';
-import { safely } from '@corentinth/chisels';
+import { safely, safelySync } from '@corentinth/chisels';
 import chokidar from 'chokidar';
 import { uniq } from 'lodash-es';
 import PQueue from 'p-queue';
@@ -29,11 +30,13 @@ export function createIngestionFolderWatcher({
   logger = createLogger({ namespace: 'ingestion-folder-watcher' }),
   db,
   taskServices,
+  documentsStorageService,
 }: {
   config: Config;
   logger?: Logger;
   db: Database;
   taskServices: TaskServices;
+  documentsStorageService: DocumentStorageService;
 }) {
   const { folderRootPath, watcher: { usePolling, pollingInterval }, processingConcurrency } = config.ingestionFolder;
 
@@ -44,7 +47,7 @@ export function createIngestionFolderWatcher({
   return {
     startWatchingIngestionFolders: async () => {
       const organizationsRepository = createOrganizationsRepository({ db });
-      const createDocument = await createDocumentCreationUsecase({ db, config, logger, taskServices });
+      const createDocument = await createDocumentCreationUsecase({ db, config, logger, taskServices, documentsStorageService });
 
       const ignored = await buildPathIgnoreFunction({ config, cwd, organizationsRepository });
 
@@ -109,14 +112,14 @@ export async function processFile({
   const { postProcessing: { moveToFolderPath: doneFolder }, errorFolder } = config.ingestionFolder;
 
   // Get the file from the ingestion folder as a File Instance
-  const [getFileResult, getFileError] = await safely(getFile({ filePath, fs }));
+  const [getFileResult, getFileError] = safelySync(() => getFile({ filePath, fs }));
 
   if (getFileError) {
     logger.error({ filePath, error: getFileError }, 'Error reading file');
     return;
   }
 
-  const { file } = getFileResult;
+  const { fileStream, mimeType, fileName } = getFileResult;
 
   const { organizationId } = await getFileOrganizationId({ filePath, ingestionFolderPath, organizationsRepository });
 
@@ -137,7 +140,13 @@ export async function processFile({
     return;
   }
 
-  const [result, error] = await safely(createDocument({ file, organizationId }));
+  // TODO: switch to native stream
+  const [result, error] = await safely(createDocument({
+    fileStream,
+    fileName,
+    mimeType,
+    organizationId,
+  }));
 
   const isNotInsertedBecauseAlreadyExists = isErrorWithCode({ error, code: DOCUMENT_ALREADY_EXISTS_ERROR_CODE });
 

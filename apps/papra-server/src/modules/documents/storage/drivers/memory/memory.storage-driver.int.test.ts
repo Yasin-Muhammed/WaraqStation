@@ -1,16 +1,32 @@
+import type { Buffer } from 'node:buffer';
 import { describe, expect, test } from 'vitest';
+import { createReadableStream, fileToReadableStream } from '../../../../shared/streams/readable-stream';
 import { createFileNotFoundError } from '../../document-storage.errors';
+import { runDriverTestSuites } from '../drivers.test-suite';
 import { inMemoryStorageDriverFactory } from './memory.storage-driver';
 
 describe('memory storage-driver', () => {
   describe('inMemoryStorageDriver', () => {
+    runDriverTestSuites({
+      createDriver: async () => {
+        const inMemoryStorageDriver = inMemoryStorageDriverFactory();
+
+        return {
+          driver: inMemoryStorageDriver,
+          [Symbol.asyncDispose]: async () => {},
+        };
+      },
+    });
+
     test('saves, retrieves and delete a file', async () => {
-      const inMemoryStorageDriver = await inMemoryStorageDriverFactory();
+      const inMemoryStorageDriver = inMemoryStorageDriverFactory();
 
       const file = new File(['lorem ipsum'], 'text-file.txt', { type: 'text/plain' });
 
       const { storageKey } = await inMemoryStorageDriver.saveFile({
-        file,
+        fileStream: fileToReadableStream(file),
+        fileName: 'text-file.txt',
+        mimeType: 'text/plain',
         storageKey: 'org_1/text-file.txt',
       });
 
@@ -30,10 +46,12 @@ describe('memory storage-driver', () => {
     });
 
     test('mainly for testing purposes, a _getStorage() method is available to access the internal storage map', async () => {
-      const inMemoryStorageDriver = await inMemoryStorageDriverFactory();
+      const inMemoryStorageDriver = inMemoryStorageDriverFactory();
 
       await inMemoryStorageDriver.saveFile({
-        file: new File(['lorem ipsum'], 'text-file.txt', { type: 'text/plain' }),
+        fileStream: createReadableStream({ content: 'lorem ipsum' }),
+        fileName: 'text-file.txt',
+        mimeType: 'text/plain',
         storageKey: 'org_1/text-file.txt',
       });
 
@@ -43,11 +61,11 @@ describe('memory storage-driver', () => {
       const entries = Array.from(storage.entries());
 
       expect(entries).to.have.length(1);
-      const [key, file] = entries[0] as [string, File];
+      const [key, file] = entries[0] as [string, { content: Buffer; mimeType: string; fileName: string }];
 
       expect(key).to.eql('org_1/text-file.txt');
-      expect(file).to.be.a('File');
-      expect(await file.text()).to.eql('lorem ipsum');
+      expect(file).to.be.a('object');
+      expect(file.content.toString('utf-8')).to.eql('lorem ipsum');
     });
   });
 });

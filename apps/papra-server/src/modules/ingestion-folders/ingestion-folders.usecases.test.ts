@@ -1,6 +1,4 @@
-import type { FsNative } from '../shared/fs/fs.services';
 import { safely } from '@corentinth/chisels';
-import { memfs } from 'memfs';
 import { describe, expect, test } from 'vitest';
 import { createInMemoryDatabase } from '../app/database/database.test-utils';
 import { overrideConfig } from '../config/config.test-utils';
@@ -9,7 +7,6 @@ import { createDocumentCreationUsecase } from '../documents/documents.usecases';
 import { inMemoryStorageDriverFactory } from '../documents/storage/drivers/memory/memory.storage-driver';
 import { createOrganizationsRepository } from '../organizations/organizations.repository';
 import { createInMemoryFsServices } from '../shared/fs/fs.in-memory';
-import { createFsServices } from '../shared/fs/fs.services';
 import { createTestLogger } from '../shared/logger/logger.test-utils';
 import { createInMemoryTaskServices } from '../tasks/tasks.test-utils';
 import { createInvalidPostProcessingStrategyError } from './ingestion-folders.errors';
@@ -40,11 +37,11 @@ describe('ingestion-folders usecases', () => {
           },
         });
 
-        const documentsStorageService = await inMemoryStorageDriverFactory();
+        const documentsStorageService = inMemoryStorageDriverFactory();
         let documentIdIndex = 1;
         const generateDocumentId = () => `doc_${documentIdIndex++}`;
 
-        const { vol } = memfs({
+        const { fs, getFsState } = createInMemoryFsServices({
           '/apps/papra/ingestion/org_111111111111111111111111/hello.md': 'lorem ipsum',
         });
 
@@ -54,7 +51,7 @@ describe('ingestion-folders usecases', () => {
           config,
           organizationsRepository,
           logger,
-          fs: createFsServices({ fs: vol.promises as unknown as FsNative }),
+          fs,
           createDocument: await createDocumentCreationUsecase({ db, config, logger, documentsStorageService, generateDocumentId, taskServices }),
         });
 
@@ -76,15 +73,15 @@ describe('ingestion-folders usecases', () => {
 
         expect(files).to.have.length(1);
 
-        const [file] = files as [File];
+        const [file] = files;
 
-        expect(file.name).to.equal('hello.md');
-        expect(file.size).to.equal(11);
-        expect(file.type).to.equal('text/markdown');
-        expect(await file.text()).to.equal('lorem ipsum');
+        expect(file!.fileName).to.equal('hello.md');
+        expect(file!.content.length).to.equal(11);
+        expect(file!.mimeType).to.equal('text/markdown');
+        expect(file!.content.toString('utf-8')).to.equal('lorem ipsum');
 
         // Check FS, ensure the file has been moved to the done folder
-        expect(vol.toJSON()).to.deep.equal({
+        expect(getFsState()).to.deep.equal({
           '/apps/papra/ingestion/org_111111111111111111111111/done/hello.md': 'lorem ipsum',
         });
 
@@ -142,11 +139,11 @@ describe('ingestion-folders usecases', () => {
           },
         });
 
-        const documentsStorageService = await inMemoryStorageDriverFactory();
+        const documentsStorageService = inMemoryStorageDriverFactory();
         let documentIdIndex = 1;
         const generateDocumentId = () => `doc_${documentIdIndex++}`;
 
-        const { vol } = memfs({
+        const { fs, getFsState } = createInMemoryFsServices({
           '/apps/papra/ingestion/org_111111111111111111111111/hello.md': 'lorem ipsum',
         });
 
@@ -156,7 +153,7 @@ describe('ingestion-folders usecases', () => {
           config,
           organizationsRepository,
           logger,
-          fs: createFsServices({ fs: vol.promises as unknown as FsNative }),
+          fs,
           createDocument: await createDocumentCreationUsecase({ db, config, logger, documentsStorageService, generateDocumentId, taskServices }),
         });
 
@@ -178,15 +175,15 @@ describe('ingestion-folders usecases', () => {
 
         expect(files).to.have.length(1);
 
-        const [file] = files as [File];
+        const [file] = files;
 
-        expect(file.name).to.equal('hello.md');
-        expect(file.size).to.equal(11);
-        expect(file.type).to.equal('text/markdown');
-        expect(await file.text()).to.equal('lorem ipsum');
+        expect(file!.fileName).to.equal('hello.md');
+        expect(file!.content.length).to.equal(11);
+        expect(file!.mimeType).to.equal('text/markdown');
+        expect(file!.content.toString('utf-8')).to.equal('lorem ipsum');
 
         // Check FS, ensure the file has been moved to the done folder
-        expect(vol.toJSON()).to.deep.equal({
+        expect(getFsState()).to.deep.equal({
           '/apps/papra/ingestion/org_111111111111111111111111': null,
         });
 
@@ -245,11 +242,11 @@ describe('ingestion-folders usecases', () => {
           },
         });
 
-        const documentsStorageService = await inMemoryStorageDriverFactory();
+        const documentsStorageService = inMemoryStorageDriverFactory();
         let documentIdIndex = 1;
         const generateDocumentId = () => `doc_${documentIdIndex++}`;
 
-        const { vol } = memfs({
+        const { fs, getFsState } = createInMemoryFsServices({
           '/apps/papra/ingestion/org_111111111111111111111111/hello.md': 'lorem ipsum',
         });
 
@@ -259,7 +256,7 @@ describe('ingestion-folders usecases', () => {
           config,
           organizationsRepository,
           logger,
-          fs: createFsServices({ fs: vol.promises as unknown as FsNative }),
+          fs,
           createDocument: await createDocumentCreationUsecase({ db, config, logger, documentsStorageService, generateDocumentId, taskServices }),
         }));
 
@@ -283,15 +280,15 @@ describe('ingestion-folders usecases', () => {
 
         expect(files).to.have.length(1);
 
-        const [file] = files as [File];
+        const [file] = files;
 
-        expect(file.name).to.equal('hello.md');
-        expect(file.size).to.equal(11);
-        expect(file.type).to.equal('text/markdown');
-        expect(await file.text()).to.equal('lorem ipsum');
+        expect(file!.fileName).to.equal('hello.md');
+        expect(file!.content.length).to.equal(11);
+        expect(file!.mimeType).to.equal('text/markdown');
+        expect(file!.content.toString('utf-8')).to.equal('lorem ipsum');
 
         // Check FS, ensure the file is still in the ingestion folder
-        expect(vol.toJSON()).to.deep.equal({
+        expect(getFsState()).to.deep.equal({
           '/apps/papra/ingestion/org_111111111111111111111111/hello.md': 'lorem ipsum',
         });
       });
@@ -318,11 +315,11 @@ describe('ingestion-folders usecases', () => {
           },
         });
 
-        const documentsStorageService = await inMemoryStorageDriverFactory();
+        const documentsStorageService = inMemoryStorageDriverFactory();
         let documentIdIndex = 1;
         const generateDocumentId = () => `doc_${documentIdIndex++}`;
 
-        const { vol } = memfs({
+        const { fs } = createInMemoryFsServices({
           '/apps/papra/ingestion/org_111111111111111111111111/hello.md': 'lorem ipsum',
         });
 
@@ -333,8 +330,8 @@ describe('ingestion-folders usecases', () => {
           organizationsRepository,
           logger,
           fs: {
-            ...createFsServices({ fs: vol.promises as unknown as FsNative }),
-            readFile: async () => {
+            ...fs,
+            createReadStream: () => {
               throw new Error('File not found');
             },
           },
@@ -384,7 +381,7 @@ describe('ingestion-folders usecases', () => {
           },
         });
 
-        const { vol } = memfs({
+        const { fs } = createInMemoryFsServices({
           '/apps/papra/ingestion/org_111111111111111111111111/done/hello.md': 'lorem ipsum',
           '/apps/papra/ingestion/org_111111111111111111111111/error/world.md': 'dolor sit amet',
         });
@@ -395,7 +392,7 @@ describe('ingestion-folders usecases', () => {
           config,
           organizationsRepository,
           logger,
-          fs: createFsServices({ fs: vol.promises as unknown as FsNative }),
+          fs,
           createDocument: async () => expect.fail('Document should not be created'),
         });
 
@@ -405,7 +402,7 @@ describe('ingestion-folders usecases', () => {
           config,
           organizationsRepository,
           logger,
-          fs: createFsServices({ fs: vol.promises as unknown as FsNative }),
+          fs,
           createDocument: async () => expect.fail('Document should not be created'),
         });
 
@@ -450,7 +447,7 @@ describe('ingestion-folders usecases', () => {
         });
         const organizationsRepository = createOrganizationsRepository({ db });
 
-        const documentsStorageService = await inMemoryStorageDriverFactory();
+        const documentsStorageService = inMemoryStorageDriverFactory();
         let documentIdIndex = 1;
         const generateDocumentId = () => `doc_${documentIdIndex++}`;
 
@@ -467,7 +464,7 @@ describe('ingestion-folders usecases', () => {
           },
         });
 
-        const { vol } = memfs({
+        const { fs, getFsState } = createInMemoryFsServices({
           '/apps/papra/ingestion/org_111111111111111111111111/hello.md': 'lorem ipsum',
         });
 
@@ -477,7 +474,7 @@ describe('ingestion-folders usecases', () => {
           config,
           organizationsRepository,
           logger,
-          fs: createFsServices({ fs: vol.promises as unknown as FsNative }),
+          fs,
           createDocument: await createDocumentCreationUsecase({ db, config, logger, documentsStorageService, generateDocumentId, taskServices }),
         });
 
@@ -488,7 +485,7 @@ describe('ingestion-folders usecases', () => {
         expect(documents[0]?.id).to.equal('doc_1');
 
         // Check fs
-        expect(vol.toJSON()).to.deep.equal({
+        expect(getFsState()).to.deep.equal({
           '/apps/papra/ingestion/org_111111111111111111111111/done/hello.md': 'lorem ipsum',
         });
 
@@ -541,7 +538,7 @@ describe('ingestion-folders usecases', () => {
           },
         });
 
-        const { vol } = memfs({
+        const { fs, getFsState } = createInMemoryFsServices({
           '/apps/papra/ingestion/org_111111111111111111111111/hello.md': 'lorem ipsum',
         });
 
@@ -551,7 +548,7 @@ describe('ingestion-folders usecases', () => {
           config,
           organizationsRepository,
           logger,
-          fs: createFsServices({ fs: vol.promises as unknown as FsNative }),
+          fs,
           createDocument: async () => {
             throw new Error('Document creation failed');
           },
@@ -564,7 +561,7 @@ describe('ingestion-folders usecases', () => {
         expect(documents[0]?.id).to.equal('doc_1');
 
         // Check fs
-        expect(vol.toJSON()).to.deep.equal({
+        expect(getFsState()).to.deep.equal({
           '/apps/papra/ingestion/org_111111111111111111111111/error/hello.md': 'lorem ipsum',
         });
 

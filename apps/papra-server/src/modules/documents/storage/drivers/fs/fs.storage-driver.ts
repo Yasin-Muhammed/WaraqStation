@@ -1,6 +1,5 @@
 import fs from 'node:fs';
 import { dirname, join } from 'node:path';
-import stream from 'node:stream';
 import { get } from 'lodash-es';
 import { checkFileExists, deleteFile, ensureDirectoryExists } from '../../../../shared/fs/fs.services';
 import { createFileNotFoundError } from '../../document-storage.errors';
@@ -9,16 +8,14 @@ import { createFileAlreadyExistsError } from './fs.storage-driver.errors';
 
 export const FS_STORAGE_DRIVER_NAME = 'filesystem' as const;
 
-export const fsStorageDriverFactory = defineStorageDriver(async ({ config }) => {
+export const fsStorageDriverFactory = defineStorageDriver(({ config }) => {
   const { root } = config.documentsStorage.drivers.filesystem;
-
-  await ensureDirectoryExists({ path: root });
 
   const getStoragePath = ({ storageKey }: { storageKey: string }) => ({ storagePath: join(root, storageKey) });
 
   return {
     name: FS_STORAGE_DRIVER_NAME,
-    saveFile: async ({ file, storageKey }) => {
+    saveFile: async ({ fileStream, storageKey }) => {
       const { storagePath } = getStoragePath({ storageKey });
 
       const fileExists = await checkFileExists({ path: storagePath });
@@ -30,7 +27,7 @@ export const fsStorageDriverFactory = defineStorageDriver(async ({ config }) => 
       await ensureDirectoryExists({ path: dirname(storagePath) });
 
       const writeStream = fs.createWriteStream(storagePath);
-      stream.Readable.fromWeb(file.stream()).pipe(writeStream);
+      fileStream.pipe(writeStream);
 
       return new Promise((resolve, reject) => {
         writeStream.on('finish', () => {
@@ -51,8 +48,7 @@ export const fsStorageDriverFactory = defineStorageDriver(async ({ config }) => 
         throw createFileNotFoundError();
       }
 
-      const readStream = fs.createReadStream(storagePath);
-      const fileStream = stream.Readable.toWeb(readStream);
+      const fileStream = fs.createReadStream(storagePath);
 
       return { fileStream };
     },
