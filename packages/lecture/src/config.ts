@@ -14,7 +14,8 @@ export function parseConfig({ rawConfig = {} }: { rawConfig?: PartialExtractorCo
   return {
     config: {
       tesseract: {
-        languages: languages.length > 0 ? languages : ['eng'],
+        // Default to Arabic and English for optimal Arabic document processing
+        languages: languages.length > 0 ? languages : ['ara', 'eng'],
       },
     },
   };

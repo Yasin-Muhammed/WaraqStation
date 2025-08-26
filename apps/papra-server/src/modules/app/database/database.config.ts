@@ -20,4 +20,10 @@ export const databaseConfig = {
     default: undefined,
     env: 'DATABASE_ENCRYPTION_KEY',
   },
+  useEnhancedDriver: {
+    doc: 'Use enhanced SQLite driver (better-sqlite3) for improved Arabic text processing performance. Only works with local SQLite files.',
+    schema: z.boolean(),
+    default: true,
+    env: 'DATABASE_USE_ENHANCED_DRIVER',
+  },
 } as const satisfies ConfigDefinition;

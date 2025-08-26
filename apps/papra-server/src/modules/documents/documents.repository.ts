@@ -304,17 +304,39 @@ async function getExpiredDeletedDocuments({ db, expirationDelayInDays, now = new
 }
 
 async function searchOrganizationDocuments({ organizationId, searchQuery, pageIndex, pageSize, db }: { organizationId: string; searchQuery: string; pageIndex: number; pageSize: number; db: Database }) {
-  // TODO: extract this logic to a tested function
-  // when searchquery is a single word, we append a wildcard to it to make it a prefix search
+  // Import Arabic search utilities
+  const { containsArabic, prepareArabicSearchQuery, normalizeArabicForSearch } = await import('./utils/arabic-search-processor');
+  
+  // Clean the search query
   const cleanedSearchQuery = searchQuery.replace(/"/g, '').replace(/\*/g, '').trim();
-  const formattedSearchQuery = cleanedSearchQuery.includes(' ') ? cleanedSearchQuery : `${cleanedSearchQuery}*`;
+  
+  let formattedSearchQuery: string;
+  
+  // Check if the query contains Arabic text
+  if (containsArabic(cleanedSearchQuery)) {
+    // Use Arabic-aware search query preparation
+    formattedSearchQuery = prepareArabicSearchQuery(cleanedSearchQuery);
+  } else {
+    // Use original logic for non-Arabic queries
+    formattedSearchQuery = cleanedSearchQuery.includes(' ') ? cleanedSearchQuery : `${cleanedSearchQuery}*`;
+  }
+  
+  // If no valid search query is generated, return empty results
+  if (!formattedSearchQuery.trim()) {
+    return {
+      documents: [],
+    };
+  }
 
+  // Use Arabic-enhanced FTS table if the query contains Arabic text
+  const ftsTable = containsArabic(cleanedSearchQuery) ? 'documents_fts_arabic' : 'documents_fts';
+  
   const result = await db.run(sql`
     SELECT * FROM ${documentsTable}
-    JOIN documents_fts ON documents_fts.id = ${documentsTable.id}
+    JOIN ${sql.raw(ftsTable)} ON ${sql.raw(ftsTable)}.id = ${documentsTable.id}
     WHERE ${documentsTable.organizationId} = ${organizationId}
           AND ${documentsTable.isDeleted} = 0
-          AND documents_fts MATCH ${formattedSearchQuery}
+          AND ${sql.raw(ftsTable)} MATCH ${formattedSearchQuery}
     ORDER BY rank
     LIMIT ${pageSize}
     OFFSET ${pageIndex * pageSize}

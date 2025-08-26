@@ -9,6 +9,7 @@ import { organizationsInvitationsImprovementMigration } from './list/0006-organi
 import { documentActivityLogMigration } from './list/0007-document-activity-log.migration';
 import { documentActivityLogOnDeleteSetNullMigration } from './list/0008-document-activity-log-on-delete-set-null.migration';
 import { dropLegacyMigrationsMigration } from './list/0009-drop-legacy-migrations.migration';
+import { arabicFtsEnhancementMigration } from './list/0010-arabic-fts-enhancement.migration';
 
 export const migrations: Migration[] = [
   initialSchemaSetupMigration,
@@ -20,4 +21,5 @@ export const migrations: Migration[] = [
   documentActivityLogMigration,
   documentActivityLogOnDeleteSetNullMigration,
   dropLegacyMigrationsMigration,
+  arabicFtsEnhancementMigration,
 ];
