@@ -1,5 +1,19 @@
-import ArabicReshaper from 'arabic-reshaper';
-import bidi from 'bidi';
+// Import Arabic processing libraries with fallback handling
+let ArabicReshaper: any = null;
+let Bidi: any = null;
+
+try {
+  ArabicReshaper = require('arabic-reshaper');
+} catch (error) {
+  console.warn('Arabic reshaper library not available, text reshaping will be skipped');
+}
+
+try {
+  const bidiModule = require('bidi');
+  Bidi = bidiModule.Bidi || bidiModule;
+} catch (error) {
+  console.warn('Bidi library not available, bidirectional text processing will be skipped');
+}
 
 /**
  * Arabic text processing utilities for OCR enhancement
@@ -43,21 +57,41 @@ export function normalizeArabicText(text: string): string {
  */
 export function reshapeArabicText(text: string): string {
   try {
-    // Reshape Arabic text to handle proper character connections
-    const reshaped = ArabicReshaper(text, {
-      // Enable ligature support
-      ligatures: true,
-      // Support for Persian/Farsi characters
-      support_persian: true,
-      // Support for Urdu characters
-      support_urdu: true,
-    });
+    let processedText = text;
     
-    // Apply bidirectional text algorithm
-    return bidi(reshaped, { dir: 'rtl' });
+    // Only attempt reshaping if the library is available
+    if (ArabicReshaper && typeof ArabicReshaper === 'function') {
+      processedText = ArabicReshaper(text, {
+        // Enable ligature support
+        ligatures: true,
+        // Support for Persian/Farsi characters
+        support_persian: true,
+        // Support for Urdu characters
+        support_urdu: true,
+      });
+    }
+    
+    // Apply bidirectional text algorithm if available
+    if (Bidi) {
+      try {
+        if (typeof Bidi === 'function') {
+          const bidiInstance = new Bidi();
+          if (bidiInstance.logicalToVisual) {
+            processedText = bidiInstance.logicalToVisual(processedText);
+          }
+        } else if (Bidi.logicalToVisual) {
+          processedText = Bidi.logicalToVisual(processedText);
+        }
+      } catch (bidiError) {
+        console.warn('Bidi processing failed, continuing without it:', bidiError.message);
+      }
+    }
+    
+    return processedText;
   } catch (error) {
-    console.warn('Arabic text reshaping failed:', error);
-    return text;
+    console.warn('Arabic text reshaping failed, using normalized text:', error.message);
+    // Return normalized text without reshaping if reshaping fails
+    return normalizeArabicText(text);
   }
 }
 

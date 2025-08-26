@@ -14,21 +14,26 @@ export async function extractTextFromImage(maybeArrayBuffer: ArrayBuffer | Buffe
   
   // Apply Arabic-specific preprocessing if Arabic language is detected
   if (isArabicOCR) {
-    // Validate image quality
-    const validation = await validateImageForOCR(buffer);
-    if (!validation.isValid) {
-      console.warn('Image quality issues detected:', validation.issues);
-      console.info('Recommendations:', validation.recommendations);
+    try {
+      // Validate image quality
+      const validation = await validateImageForOCR(buffer);
+      if (!validation.isValid) {
+        console.warn('Image quality issues detected:', validation.issues);
+        console.info('Recommendations:', validation.recommendations);
+      }
+      
+      // Preprocess image for optimal Arabic OCR with safer settings
+      processedBuffer = await preprocessArabicDocument(buffer, {
+        enhanceContrast: true,
+        reduceNoise: false, // Disable noise reduction to avoid over-processing small images
+        targetDpi: 200, // Lower DPI to avoid scaling issues
+        sharpen: false, // Disable sharpening for small images
+        grayscale: true,
+      });
+    } catch (error) {
+      console.warn('Image preprocessing failed, using original image:', error.message);
+      processedBuffer = buffer;
     }
-    
-    // Preprocess image for optimal Arabic OCR
-    processedBuffer = await preprocessArabicDocument(buffer, {
-      enhanceContrast: true,
-      reduceNoise: true,
-      targetDpi: 300,
-      sharpen: true,
-      grayscale: true,
-    });
   }
 
   // Create Tesseract worker
@@ -47,8 +52,17 @@ export async function extractTextFromImage(maybeArrayBuffer: ArrayBuffer | Buffe
       // Handle right-to-left text better
       textord_really_old_xheight: '1',
       textord_tabfind_show_vlines: '0',
-      // Page segmentation mode for Arabic text
-      tessedit_pageseg_mode: PSM.SINGLE_BLOCK, // Assume a single uniform block of text
+      // Page segmentation mode - try AUTO first for better results
+      tessedit_pageseg_mode: PSM.AUTO,
+      // Additional Arabic-specific parameters
+      tessedit_char_whitelist: '', // Don't restrict characters for Arabic
+      tessedit_char_blacklist: '', // Don't blacklist any characters
+      // Improve word recognition
+      textord_min_linesize: '1.25',
+      // Better handling of Arabic script
+      textord_tabfind_force_vertical_text: '0',
+      // Optimize for Arabic text direction
+      bidi_debug: '0',
     });
   }
 
@@ -58,12 +72,23 @@ export async function extractTextFromImage(maybeArrayBuffer: ArrayBuffer | Buffe
   // Post-process Arabic text if detected
   let processedText = text;
   if (isArabicOCR && containsArabic(text)) {
-    processedText = postprocessArabicOCR(text);
+    try {
+      processedText = postprocessArabicOCR(text);
+    } catch (error) {
+      console.warn('Arabic text post-processing failed, using raw OCR output:', error.message);
+      processedText = text;
+    }
   }
   
-  // Log confidence for debugging
+  // Log confidence for debugging and provide suggestions
   if (confidence < 70) {
     console.warn(`Low OCR confidence: ${confidence}% for languages: ${languages.join(', ')}`);
+    if (isArabicOCR) {
+      console.info('For better Arabic OCR results, try:');
+      console.info('- Higher resolution images (300+ DPI)');
+      console.info('- Better contrast and lighting');
+      console.info('- Cleaner text without noise or artifacts');
+    }
   }
 
   return processedText;

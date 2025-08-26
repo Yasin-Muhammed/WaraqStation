@@ -45,18 +45,24 @@ export async function preprocessImageForOCR(
   // Get image metadata
   const metadata = await image.metadata();
   
-  // Calculate scaling factor for target DPI
+  // Calculate scaling factor for target DPI, but ensure minimum dimensions
   const currentDpi = metadata.density || 72;
   const scaleFactor = targetDpi / currentDpi;
+  const minWidth = 100;
+  const minHeight = 100;
   
-  // Resize if needed for optimal DPI
+  // Resize if needed for optimal DPI, but ensure minimum dimensions
   if (scaleFactor !== 1 && scaleFactor > 0.5 && scaleFactor < 3) {
-    const newWidth = Math.round((metadata.width || 0) * scaleFactor);
-    const newHeight = Math.round((metadata.height || 0) * scaleFactor);
-    image = image.resize(newWidth, newHeight, {
-      kernel: sharp.kernel.lanczos3,
-      withoutEnlargement: false,
-    });
+    const newWidth = Math.max(minWidth, Math.round((metadata.width || 0) * scaleFactor));
+    const newHeight = Math.max(minHeight, Math.round((metadata.height || 0) * scaleFactor));
+    
+    // Only resize if the image is not too small
+    if ((metadata.width || 0) >= 10 && (metadata.height || 0) >= 10) {
+      image = image.resize(newWidth, newHeight, {
+        kernel: sharp.kernel.lanczos3,
+        withoutEnlargement: false,
+      });
+    }
   }
   
   // Convert to grayscale for better OCR performance
@@ -155,23 +161,43 @@ export async function preprocessArabicDocument(
 ): Promise<Buffer> {
   const buffer = imageBuffer instanceof ArrayBuffer ? Buffer.from(imageBuffer) : imageBuffer;
   
-  // Step 1: Crop borders if needed
-  let processedBuffer = await cropDocumentBorders(buffer);
-  
-  // Step 2: Detect and correct orientation
-  processedBuffer = await detectAndCorrectOrientation(processedBuffer);
-  
-  // Step 3: Apply general preprocessing optimized for Arabic
-  processedBuffer = await preprocessImageForOCR(processedBuffer, {
-    enhanceContrast: true,
-    reduceNoise: true,
-    targetDpi: 300,
-    sharpen: true,
-    grayscale: true,
-    ...options,
-  });
-  
-  return processedBuffer;
+  try {
+    // Check image dimensions first
+    const image = sharp(buffer);
+    const metadata = await image.metadata();
+    
+    // If image is too small, skip preprocessing to avoid scaling issues
+    if ((metadata.width || 0) < 50 || (metadata.height || 0) < 50) {
+      console.warn('Image too small for preprocessing, using original');
+      return buffer;
+    }
+    
+    // Step 1: Apply gentle preprocessing for small images
+    let processedBuffer = buffer;
+    
+    // Only apply cropping for larger images
+    if ((metadata.width || 0) > 200 && (metadata.height || 0) > 200) {
+      processedBuffer = await cropDocumentBorders(buffer);
+    }
+    
+    // Step 2: Skip orientation correction for now (can cause issues)
+    // processedBuffer = await detectAndCorrectOrientation(processedBuffer);
+    
+    // Step 3: Apply conservative preprocessing
+    processedBuffer = await preprocessImageForOCR(processedBuffer, {
+      enhanceContrast: true,
+      reduceNoise: false, // Disable noise reduction by default
+      targetDpi: 200, // Lower DPI to avoid scaling issues
+      sharpen: false, // Disable sharpening by default
+      grayscale: true,
+      ...options,
+    });
+    
+    return processedBuffer;
+  } catch (error) {
+    console.warn('Image preprocessing failed:', error.message);
+    return buffer; // Return original buffer if preprocessing fails
+  }
 }
 
 /**
