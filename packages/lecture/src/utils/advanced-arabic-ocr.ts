@@ -229,7 +229,7 @@ export async function performAdvancedArabicOCR(
         const preprocessingTime = Date.now() - preprocessingStart;
         
         const ocrStart = Date.now();
-        const result = await performSingleOCRAttempt(preprocessedBuffer, languages, strategy.name);
+        const result = await performSingleOCRAttempt(preprocessedBuffer, languages, strategy.name, undefined, OEM.LSTM_ONLY);
         const ocrTime = Date.now() - ocrStart;
         
         const ocrResult: ArabicOCRResult = {
@@ -251,7 +251,9 @@ export async function performAdvancedArabicOCR(
           break;
         }
       } catch (error) {
-        console.warn(`Strategy ${strategy.name} failed:`, error.message);
+        console.warn(`Strategy ${strategy.name} failed:`, error instanceof Error ? error.message : String(error));
+        // Continue with next strategy instead of failing completely
+        continue;
       }
     }
   }
@@ -261,7 +263,7 @@ export async function performAdvancedArabicOCR(
     try {
       console.log('Trying OCR with original image...');
       const ocrStart = Date.now();
-      const result = await performSingleOCRAttempt(buffer, languages, 'original');
+      const result = await performSingleOCRAttempt(buffer, languages, 'original', undefined, OEM.LSTM_ONLY);
       const ocrTime = Date.now() - ocrStart;
       
       const ocrResult: ArabicOCRResult = {
@@ -274,9 +276,9 @@ export async function performAdvancedArabicOCR(
       if (result.confidence > bestResult.confidence) {
         bestResult = ocrResult;
       }
-    } catch (error) {
-      console.warn('Original image OCR failed:', error.message);
-    }
+          } catch (error) {
+        console.warn('Original image OCR failed:', error instanceof Error ? error.message : String(error));
+      }
   }
   
   // Strategy 3: Try with different PSM modes if still not good
@@ -287,7 +289,7 @@ export async function performAdvancedArabicOCR(
       try {
         console.log(`Trying OCR with PSM mode: ${psm}`);
         const ocrStart = Date.now();
-        const result = await performSingleOCRAttempt(buffer, languages, `psm_${psm}`, psm);
+        const result = await performSingleOCRAttempt(buffer, languages, `psm_${psm}`, psm, OEM.LSTM_ONLY);
         const ocrTime = Date.now() - ocrStart;
         
         const ocrResult: ArabicOCRResult = {
@@ -304,8 +306,8 @@ export async function performAdvancedArabicOCR(
         if (result.confidence >= minConfidenceThreshold) {
           break;
         }
-      } catch (error) {
-        console.warn(`PSM mode ${psm} failed:`, error.message);
+              } catch (error) {
+        console.warn(`PSM mode ${psm} failed:`, error instanceof Error ? error.message : String(error));
       }
     }
   }
@@ -322,14 +324,25 @@ async function performSingleOCRAttempt(
   buffer: Buffer,
   languages: string[],
   strategyName: string,
-  psmMode?: PSM
+  psmMode?: PSM,
+  oemMode?: OEM
 ): Promise<{ text: string; confidence: number }> {
-  const worker = await createWorker(languages);
+  let worker;
+  
+  try {
+    // Create worker with specific OEM mode if provided
+    worker = oemMode !== undefined 
+      ? await createWorker(languages, oemMode)
+      : await createWorker(languages);
+  } catch (error) {
+    console.warn(`Failed to create worker for ${strategyName}:`, error instanceof Error ? error.message : String(error));
+    throw new Error(`Worker creation failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
   
   try {
     const isArabicOCR = languages.includes('ara');
     
-    // Set optimal parameters for Arabic OCR
+    // Set optimal parameters for Arabic OCR (excluding tessedit_ocr_engine_mode)
     await worker.setParameters({
       preserve_interword_spaces: '1',
       tessedit_pageseg_mode: psmMode || PSM.AUTO,
@@ -367,9 +380,6 @@ async function performSingleOCRAttempt(
         // Character whitelist for Arabic (remove if causing issues)
         tessedit_char_whitelist: '',
         tessedit_char_blacklist: '',
-        
-        // OCR Engine Mode - try LSTM only for better Arabic support
-        tessedit_ocr_engine_mode: OEM.LSTM_ONLY,
       }),
     });
     
@@ -391,7 +401,13 @@ async function performSingleOCRAttempt(
       confidence: confidence || 0,
     };
   } finally {
-    await worker.terminate();
+    try {
+      if (worker) {
+        await worker.terminate();
+      }
+    } catch (error) {
+      console.warn(`Failed to terminate worker for ${strategyName}:`, error instanceof Error ? error.message : String(error));
+    }
   }
 }
 
@@ -414,7 +430,7 @@ export async function createImageVariants(buffer: Buffer): Promise<Array<{ buffe
     try {
       const highContrast = await image.clone()
         .normalize()
-        .gamma(0.8)
+        .gamma(1.2)  // Fixed: gamma must be >= 1.0
         .linear(1.5, -50)
         .threshold(120)
         .png({ quality: 100 })
@@ -426,33 +442,46 @@ export async function createImageVariants(buffer: Buffer): Promise<Array<{ buffe
     
     // Denoised version
     try {
-      const denoised = await image.clone()
-        .median(2)
-        .normalize()
-        .sharpen({ sigma: 1.5, m1: 1.0, m2: 2.0 })
-        .threshold(130)
-        .png({ quality: 100 })
-        .toBuffer();
-      variants.push({ buffer: denoised, name: 'denoised' });
+      // Check if image is large enough for denoising operations
+      if ((metadata.width || 0) >= 10 && (metadata.height || 0) >= 10) {
+        const denoised = await image.clone()
+          .median(2)
+          .normalize()
+          .sharpen({ sigma: 1.5, m1: 1.0, m2: 2.0 })
+          .threshold(130)
+          .png({ quality: 100 })
+          .toBuffer();
+        variants.push({ buffer: denoised, name: 'denoised' });
+      } else {
+        console.warn('Image too small for denoising, skipping denoised variant');
+      }
     } catch (error) {
       console.warn('Denoised variant failed:', error.message);
     }
     
     // Enhanced for small text
     try {
-      const enhanced = await image.clone()
-        .resize(
-          Math.max(800, (metadata.width || 0) * 2),
-          Math.max(600, (metadata.height || 0) * 2),
-          { kernel: sharp.kernel.lanczos3 }
-        )
-        .grayscale()
-        .normalize()
-        .sharpen({ sigma: 2.0, m1: 1.0, m2: 3.0 })
-        .threshold(125)
-        .png({ quality: 100 })
-        .toBuffer();
-      variants.push({ buffer: enhanced, name: 'enhanced_upscaled' });
+      const currentWidth = metadata.width || 0;
+      const currentHeight = metadata.height || 0;
+      
+      // Only upscale if the image is reasonably sized
+      if (currentWidth >= 5 && currentHeight >= 5) {
+        const enhanced = await image.clone()
+          .resize(
+            Math.max(800, currentWidth * 2),
+            Math.max(600, currentHeight * 2),
+            { kernel: sharp.kernel.lanczos3 }
+          )
+          .grayscale()
+          .normalize()
+          .sharpen({ sigma: 2.0, m1: 1.0, m2: 3.0 })
+          .threshold(125)
+          .png({ quality: 100 })
+          .toBuffer();
+        variants.push({ buffer: enhanced, name: 'enhanced_upscaled' });
+      } else {
+        console.warn('Image too small for upscaling, skipping enhanced variant');
+      }
     } catch (error) {
       console.warn('Enhanced variant failed:', error.message);
     }
@@ -493,7 +522,7 @@ export async function performMultiVariantArabicOCR(
       console.log(`Trying OCR with variant: ${variant.name}`);
       
       const ocrStart = Date.now();
-      const result = await performSingleOCRAttempt(variant.buffer, languages, variant.name);
+      const result = await performSingleOCRAttempt(variant.buffer, languages, variant.name, undefined, OEM.LSTM_ONLY);
       const ocrTime = Date.now() - ocrStart;
       
       const ocrResult: ArabicOCRResult = {

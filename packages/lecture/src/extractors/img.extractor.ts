@@ -58,7 +58,7 @@ export async function extractTextFromImage(maybeArrayBuffer: ArrayBuffer | Buffe
         console.warn('All Arabic OCR approaches failed, falling back to standard OCR');
       }
     } catch (error) {
-      console.warn('Advanced Arabic OCR failed:', error.message);
+      console.warn('Advanced Arabic OCR failed:', error instanceof Error ? error.message : String(error));
       console.log('Falling back to standard OCR...');
     }
   }

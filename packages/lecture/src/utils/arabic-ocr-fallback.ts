@@ -26,7 +26,6 @@ export async function tryMultiLanguageOCR(
   const languageCombinations = [
     ['ara'], // Arabic only
     ['ara', 'eng'], // Arabic + English
-    ['ara', 'eng', 'fra'], // Arabic + English + French (common in some Arabic documents)
     ['eng', 'ara'], // English primary, Arabic secondary
   ];
   
@@ -34,14 +33,16 @@ export async function tryMultiLanguageOCR(
     try {
       console.log(`Trying OCR with languages: ${languages.join(', ')}`);
       
-      const worker = await createWorker(languages);
+      // Create worker with LSTM_ONLY mode for Arabic
+      const worker = languages[0] === 'ara' 
+        ? await createWorker(languages, OEM.LSTM_ONLY)
+        : await createWorker(languages);
       
       // Optimize for the primary language
       if (languages[0] === 'ara') {
         await worker.setParameters({
           preserve_interword_spaces: '1',
           tessedit_pageseg_mode: PSM.AUTO,
-          tessedit_ocr_engine_mode: OEM.LSTM_ONLY,
           classify_enable_adaptive_matcher: '1',
           textord_heavy_nr: '1',
           // Enable Arabic script optimizations
@@ -75,7 +76,7 @@ export async function tryMultiLanguageOCR(
       console.log(`Languages ${languages.join(', ')}: ${confidence}% confidence`);
       
     } catch (error) {
-      console.warn(`Language combination ${languages.join(', ')} failed:`, error.message);
+      console.warn(`Language combination ${languages.join(', ')} failed:`, error instanceof Error ? error.message : String(error));
       results.push({
         text: '',
         confidence: 0,
@@ -108,10 +109,9 @@ export async function tryDifferentOEModes(
     try {
       console.log(`Trying OCR with OEM mode: ${name}`);
       
-      const worker = await createWorker(languages);
+      const worker = await createWorker(languages, mode);
       
       await worker.setParameters({
-        tessedit_ocr_engine_mode: mode,
         preserve_interword_spaces: '1',
         tessedit_pageseg_mode: PSM.AUTO,
         // Arabic-specific settings
@@ -143,7 +143,7 @@ export async function tryDifferentOEModes(
       console.log(`OEM ${name}: ${confidence}% confidence`);
       
     } catch (error) {
-      console.warn(`OEM mode ${name} failed:`, error.message);
+      console.warn(`OEM mode ${name} failed:`, error instanceof Error ? error.message : String(error));
       results.push({
         text: '',
         confidence: 0,
